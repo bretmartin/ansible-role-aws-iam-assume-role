@@ -1,0 +1,60 @@
+---
+
+- name: load boto3-style role assumption parameters
+  set_fact:
+    _aws_iam_assume_role_role_arn: >-
+      {{ lookup("ini",
+                "role_arn " +
+                "section=profile " + aws_profile + " " +
+                "file=" + (ansible_env.AWS_CONFIG_FILE
+                           | default(ansible_env.HOME + "/.aws/config"))) }}
+    _aws_iam_assume_role_source_profile: >-
+      {{ lookup("ini",
+                "source_profile " +
+                "section=profile " + aws_profile + " " +
+                "file=" + (ansible_env.AWS_CONFIG_FILE
+                           | default(ansible_env.HOME + "/.aws/config"))) }}
+
+
+- block:
+
+  - name: get name for source profile IAM entity
+    command: >
+      aws sts get-caller-identity
+              --output text
+              --profile '{{ _aws_iam_assume_role_source_profile }}'
+              --query 'Arn'
+    register: _aws_iam_assume_role_source_profile_entity_name
+    changed_when: false
+
+  - name: set source profile IAM entity fact
+    set_fact:
+      _aws_iam_assume_role_source_profile_entity_name: >-
+        {{ _aws_iam_assume_role_source_profile_entity_name.stdout.split("/")
+           | last }}
+
+  - name: assume the target IAM role if one is configured
+    sts_assume_role:
+      profile: '{{ _aws_iam_assume_role_source_profile }}'
+      region: '{{ aws_region }}'
+      role_arn: '{{ _aws_iam_assume_role_role_arn }}'
+      role_session_name: >-
+        {{ _aws_iam_assume_role_source_profile_entity_name
+           + "--ansible" }}
+    register: _aws_iam_assume_role_credentials
+    changed_when: false
+
+  when: >
+    _aws_iam_assume_role_role_arn       != [] and
+    _aws_iam_assume_role_source_profile != []
+
+
+- name: set temporary credentials if a role has been assumed
+  set_fact:
+    aws_iam_assume_role_access_key: >-
+      {{ _aws_iam_assume_role_credentials.sts_creds.access_key }}
+    aws_iam_assume_role_secret_key: >-
+      {{ _aws_iam_assume_role_credentials.sts_creds.secret_key }}
+    aws_iam_assume_role_session_token: >-
+      {{ _aws_iam_assume_role_credentials.sts_creds.session_token }}
+  when: _aws_iam_assume_role_credentials.sts_creds is defined
